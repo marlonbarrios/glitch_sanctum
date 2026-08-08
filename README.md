@@ -115,6 +115,14 @@ No savior. No plan. Just the silence of man.
 Sanctus… sanctus…  
 Faith not found. Reboot failed. Unreason complete.
 
+## GitHub Pages
+
+Live site: [marlonbarrios.github.io/glitch_sanctum](https://marlonbarrios.github.io/glitch_sanctum/)
+
+The site loads **`all.mp4`** (web-optimized, committed directly to the repo). The full-quality source **`all.mov`** is stored with Git LFS and is not served by GitHub Pages.
+
+In the repo **Settings → Pages**, set **Source** to **GitHub Actions** so deploys pull LFS assets when needed. After pushing to `main`, the workflow publishes the site automatically.
+
 ## Local Development
 
 1. Serve the folder with a local web server (required for video and audio — do not open as `file://`):
@@ -128,7 +136,7 @@ Faith not found. Reboot failed. Unreason complete.
 ## Technical Details
 
 - **Stack:** p5.js, p5.sound, Web Audio API (`AnalyserNode` on the video element)
-- **Video:** Dual panels—original left, horizontally mirrored right; scaled to fit, centered; optional zoom 1×–3.5×
+- **Video:** `all.mp4` for web/GitHub Pages; `all.mov` (Git LFS) is the full-quality source for local work
 - **Text:** Scrolling ticker synced to `video.time() / duration` at 90% speed
 - **Audio analysis:** Bass, treble, level, peak, and beat interval drive rotation speed, pulse, pixelation, and RGB split width
 - **Effects:** Grayscale, blue saturation overlay, RGB channel split (ADD blend), opposite panel rotation, music-reactive pixelation, beat-synced pulse/shake, panel swap
