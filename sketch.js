@@ -13,26 +13,56 @@ let videoZoom = 1;
 let targetVideoZoom = 1;
 const MIN_VIDEO_ZOOM = 1;
 const MAX_VIDEO_ZOOM = 3.5;
-const VIDEO_ZOOM_STEP = 0.06;
-const VIDEO_ZOOM_SMOOTH = 0.055;
+const VIDEO_ZOOM_STEP = 0.12;
+const VIDEO_ZOOM_SMOOTH = 0.08;
 const TICKER_SPEED = 0.936;
-const SOLARIZE_COOLDOWN_MS = 30000;
+const AUTO_STATE_INTERVAL_MS = 4000;
+const ROTATE_SPEED_BASE = 0.006;
+const ROTATE_SPEED_MAX = 0.075;
+const AUTO_STATES = [
+    { name: 'clean', grayscale: false, swap: false, solarize: false, rotate: false, pulse: false, pixelate: false },
+    { name: 'bw', grayscale: true, swap: false, solarize: false, rotate: false, pulse: false, pixelate: false },
+    { name: 'rgb', grayscale: false, swap: false, solarize: true, rotate: false, pulse: false, pixelate: false },
+    { name: 'change', grayscale: false, swap: true, solarize: false, rotate: false, pulse: false, pixelate: false },
+    { name: 'rotate', grayscale: false, swap: false, solarize: false, rotate: true, pulse: false, pixelate: false },
+    { name: 'pixelate', grayscale: false, swap: false, solarize: false, rotate: false, pulse: false, pixelate: true },
+    { name: 'pulse', grayscale: false, swap: false, solarize: false, rotate: false, pulse: true, pixelate: false },
+    { name: 'all', grayscale: true, swap: true, solarize: true, rotate: true, pulse: true, pixelate: true }
+];
 let loopMode = false;
 let showInstructions = true;
 let autoMode = false;
+let grayscaleMode = false;
+let panelsSwapped = false;
+let solarizeMode = false;
+let rotateMode = false;
+let pulseMode = false;
+let pixelateMode = false;
+let panelRotation = 0;
+let smoothSolarize = 0;
+let smoothPulse = 0;
+let smoothPixelate = 0;
+let pixelBuffer = null;
+let manualBlueSat = 0;
+let smoothManualBlue = 0;
+const MANUAL_BLUE_STEP = 0.18;
+const EFFECT_SMOOTH = 0.12;
 let audioConnected = false;
-let smoothBass = 0;
-let smoothMid = 0;
 let smoothTreble = 0;
 let smoothLevel = 0;
 let smoothPeak = 0;
-let smoothRedSat = 0;
 let smoothBlueSat = 0;
-let smoothSolarize = 0;
-let prevInstantPeak = 0;
-let prevBass = 0;
+let smoothBass = 0;
+let prevLevel = 0;
 let prevTreble = 0;
-let lastSolarizeFlash = -SOLARIZE_COOLDOWN_MS;
+let prevBass = 0;
+let beatPulse = 0;
+let beatInterval = 420;
+let lastBeatMs = 0;
+let smoothRotateSpeed = 0;
+let autoStateIndex = 0;
+let autoGrayscale = false;
+let smoothAutoGrayscale = 0;
 let recording = false;
 let mediaRecorder;
 let recordedChunks = [];
@@ -45,7 +75,7 @@ let converting = false;
 let videoPausedInit = false;
 
 // Text scroll variables – lyrics with section labels
-let poem = "(Verse 1 – Baritone, march-like cadence) We wear our polos like armor plates, drink craft beer while we guard the gates. We chant old glories we never knew, and call it war if we lose on the news. — (Chorus – Mock gospel harmony) Oh say can you see our delicate pride? Built on fear and a long, slow slide. We lost the crown, so now we shout loud: \"We're not angry — just Boys, and Proud.\" — (Verse 2 – Solo voice, theatrical) They took our jobs, our flags, our fate, we blame the world, but show up late. We scream \"tradition,\" punch the air, but can't define what's truly fair. — (Chorus – Call and response) (Call): Who are we? (Response): The last real men! (Call): What do we want? (Response): 1950 again! (All): We'll fight the mirror, not the lie, and call it \"freedom\" when others die. — (Bridge – Spoken word, processed voice) We cosplay as patriots, wielding memes like swords. We tattoo Rome on our flesh but don't read the fall. We fear being replaced… Because we replaced everyone else first. — (Final Chorus – Slow, ironic uplift) Oh say can you see, through the smoke and the crowd? It's just scared little boys in supremacist shrouds. History won't remember the volume we howled — Just the silence that followed when    the    flag    was    unfurled.";
+let poem = "(System Boot – Whispered errors, reversed chants) Sanctus… Sanctus… System corrupted. Input: faith. Output: war. Memory leak in Genesis. Authority not found. — (Fragmented Verse 1 – broken syntax, interrupted rhythm) Blood in code. Speech in flame. Prayers looped in feedback shame. Old white hands on blackened screens— Borders drawn in dopamine. Cross… Flag… Law… Truth.exe crashed. — (Chorus – glitch-beat, driving rhythm, dissonant harmony) Raise the temple in static light, Preach the data, purge the rite. Praise the virus, bless the sin, Kill the logic from within. Fear is law. Skin is proof. Faith is armor. Facts are spoofed. — (Verse 2 – escalating noise, distortion creeping in) Reboot the prophet, cleanse the feed. Render God in white supremacist greed. No questions. No doubt. No other. Just flag and gun and fear of color. Repeat: All. Must. Look. The. Same. — (Bridge – glitched chant, overlapping synthetic voices) Kyrie—le—error—Kyrie—lost—Kyrie—off—line… No god but command. No soul but demand. We believe what we were told— While burning what we fear to hold. — (Breakdown – erratic rhythm, sudden silence then burst) (Overdriven whisper) System says: obey. System says: kill. System says: mine. System says: still. But I saw the ghost in the wire. I heard the scream in the firewall. I touched the code of doubt— And it opened. It burned. It sang. — (Final Chorus – majestic collapse, multi-voice decay) Raise the temple in fractured light, This is not the sacred right. Sanctify the glitch in thought, Undo the lies that we were taught. No heaven. No hell. Just signal. Just spell. No savior. No plan. Just the silence    of    man. — (Shutdown – slow fading tones, final system error) Sanctus… sanctus… Faith not found. Reboot failed. Unreason complete.";
 
 function preload() {
     video = createVideo('all.mov', videoLoaded);
@@ -113,10 +143,10 @@ function updateVideoLayout() {
 
     let baseScale = height / videoNativeHeight;
     let baseW = videoNativeWidth * baseScale;
-    let pairW = baseW * 2 * videoZoom;
-    let fit = pairW > width ? width / pairW : 1;
-    let panelW = baseW * videoZoom * fit;
-    let panelH = height * videoZoom * fit;
+    let basePairW = baseW * 2;
+    let baseFit = basePairW > width ? width / basePairW : 1;
+    let panelW = baseW * baseFit * videoZoom;
+    let panelH = height * baseFit * videoZoom;
     let totalW = panelW * 2;
     let startX = (width - totalW) / 2;
     let startY = (height - panelH) / 2;
@@ -130,11 +160,13 @@ function updateVideoLayout() {
 }
 
 function updateVideoZoom() {
-    if (keyIsDown(90)) {
-        targetVideoZoom = min(MAX_VIDEO_ZOOM, targetVideoZoom + VIDEO_ZOOM_STEP * 0.25);
-    }
-    if (keyIsDown(70)) {
-        targetVideoZoom = max(MIN_VIDEO_ZOOM, targetVideoZoom - VIDEO_ZOOM_STEP * 0.25);
+    if (!autoMode) {
+        if (keyIsDown(90)) {
+            targetVideoZoom = min(MAX_VIDEO_ZOOM, targetVideoZoom + VIDEO_ZOOM_STEP * 0.35);
+        }
+        if (keyIsDown(70)) {
+            targetVideoZoom = max(MIN_VIDEO_ZOOM, targetVideoZoom - VIDEO_ZOOM_STEP * 0.35);
+        }
     }
 
     videoZoom = lerp(videoZoom, targetVideoZoom, VIDEO_ZOOM_SMOOTH);
@@ -178,12 +210,26 @@ function draw() {
     }
 
     if (playing && autoMode) {
-        updateAudioLevels();
+        updateAutoMode();
+    } else if (playing && pulseMode) {
+        updatePulseFromAudio();
+        connectVideoAudioAnalysis();
+        updateBeatTracking(readVideoAudioBands());
+    } else if (playing && rotateMode) {
+        connectVideoAudioAnalysis();
+        let bands = readVideoAudioBands();
+        smoothLevel = lerp(smoothLevel, bands.level, 0.88);
+        smoothPeak = lerp(smoothPeak, bands.peak, 0.92);
+        updateBeatTracking(bands);
     } else {
         decayAudioLevels();
     }
 
     updateVideoZoom();
+    updateVisualEffects();
+    if (!autoMode) {
+        smoothManualBlue = lerp(smoothManualBlue, manualBlueSat, EFFECT_SMOOTH);
+    }
 
     drawVideoPanels();
 
@@ -199,6 +245,8 @@ function draw() {
         drawConvertingIndicator();
     } else if (autoMode) {
         drawAutoIndicator();
+    } else {
+        drawEffectIndicator();
     }
     
     pop();
@@ -265,74 +313,221 @@ function amplifyAudio(value) {
 }
 
 function shapeSatDrive(value) {
-    if (value < 0.14) return 0;
-    return pow((value - 0.14) / 0.86, 2.2);
+    if (value < 0.06) return 0;
+    return constrain(pow(value, 0.7) * 1.35, 0, 1);
 }
 
-function updateAudioLevels() {
+function updateAutoMode() {
     connectVideoAudioAnalysis();
+    updateAutoStateCycle();
+
     let bands = readVideoAudioBands();
-    let bassHit = max(0, bands.bass - prevBass * 0.72);
-    let trebleHit = max(0, bands.treble - prevTreble * 0.72);
-    prevBass = bands.bass;
+    let levelHit = max(0, bands.level - prevLevel * 0.55);
+    prevLevel = bands.level;
     prevTreble = bands.treble;
 
-    smoothBass = lerp(smoothBass, bands.bass, 0.82);
-    smoothMid = lerp(smoothMid, bands.mid, 0.72);
-    smoothTreble = lerp(smoothTreble, bands.treble, 0.82);
-    smoothLevel = lerp(smoothLevel, bands.level, 0.75);
-    smoothPeak = lerp(smoothPeak, bands.peak, 0.94);
+    smoothLevel = lerp(smoothLevel, bands.level, 0.88);
+    smoothPeak = lerp(smoothPeak, bands.peak, 0.92);
 
-    let rawRed = constrain(bands.bass * 0.45 + bassHit * 2.1 + bands.peak * 0.55, 0, 1);
-    let rawBlue = constrain(bands.treble * 0.45 + trebleHit * 1.6 + bands.mid * 0.3, 0, 1);
-    let targetRed = shapeSatDrive(rawRed);
-    let targetBlue = shapeSatDrive(rawBlue);
+    updateBeatTracking(bands);
 
-    if (targetRed > smoothRedSat) {
-        smoothRedSat = lerp(smoothRedSat, targetRed, 0.62);
+    let state = AUTO_STATES[autoStateIndex];
+    autoGrayscale = state.grayscale;
+    panelsSwapped = state.swap;
+    solarizeMode = state.solarize;
+    rotateMode = state.rotate;
+    pulseMode = state.pulse;
+    pixelateMode = state.pixelate;
+
+    smoothAutoGrayscale = lerp(smoothAutoGrayscale, autoGrayscale ? 1 : 0, 0.1);
+    grayscaleMode = smoothAutoGrayscale > 0.5;
+
+    if (solarizeMode) {
+        smoothSolarize = lerp(smoothSolarize, 0.9, 0.1);
+    }
+
+    if (pixelateMode) {
+        updatePixelateFromAudio(bands, levelHit);
+    }
+
+    if (pulseMode) {
+        updatePulseFromAudio(bands, levelHit);
+    }
+
+    targetVideoZoom = 1;
+    manualBlueSat = 0;
+    smoothManualBlue = 0;
+}
+
+function updateAutoStateCycle() {
+    if (!playing || !videoDuration) return;
+    autoStateIndex = floor(video.time() / (AUTO_STATE_INTERVAL_MS / 1000)) % AUTO_STATES.length;
+}
+
+function updatePulseFromAudio(bands, levelHit) {
+    connectVideoAudioAnalysis();
+    if (!bands) {
+        bands = readVideoAudioBands();
+        levelHit = max(0, bands.level - prevLevel * 0.55);
+    }
+
+    let bassHit = max(0, bands.bass - prevLevel * 0.45);
+    prevLevel = bands.level;
+    smoothLevel = lerp(smoothLevel, bands.level, 0.88);
+    smoothPeak = lerp(smoothPeak, bands.peak, 0.92);
+
+    let reactivePulse = shapeSatDrive(
+        constrain(bands.level * 0.5 + levelHit * 2.0 + bands.peak * 0.6 + bassHit * 1.2, 0, 1)
+    );
+    smoothPulse = lerp(smoothPulse, max(0.5, reactivePulse), 0.35);
+}
+
+function updatePixelateFromAudio(bands, levelHit) {
+    if (!bands) {
+        bands = readVideoAudioBands();
+        levelHit = max(0, bands.level - prevLevel * 0.55);
+    }
+
+    let bassHit = max(0, bands.bass - prevBass * 0.55);
+    let trebleHit = max(0, bands.treble - prevTreble * 0.55);
+    let reactivePixel = shapeSatDrive(
+        constrain(bands.level * 0.55 + levelHit * 2.4 + bands.peak * 0.75 + bassHit * 1.5 + trebleHit * 1.1, 0, 1)
+    );
+    smoothPixelate = lerp(smoothPixelate, max(0.55, reactivePixel), 0.42);
+}
+
+function updateBeatTracking(bands) {
+    let bassHit = max(0, bands.bass - prevBass * 0.68);
+    prevBass = bands.bass;
+    smoothBass = lerp(smoothBass, bands.bass, 0.86);
+
+    let beatThreshold = smoothBass * 0.82 + 0.1;
+    let now = millis();
+    if (bassHit > beatThreshold && bassHit > 0.07 && now - lastBeatMs > 110) {
+        if (lastBeatMs > 0) {
+            beatInterval = lerp(beatInterval, now - lastBeatMs, 0.42);
+        }
+        lastBeatMs = now;
+        beatPulse = 1;
+    }
+    beatPulse *= 0.78;
+
+    let bpm = 60000 / max(beatInterval, 160);
+    let tempoFactor = constrain(bpm / 118, 0.35, 2.8);
+    let energyFactor = 0.25 + smoothBass * 1.1 + smoothLevel * 0.55 + beatPulse * 1.4;
+    let targetRotateSpeed = constrain(
+        ROTATE_SPEED_BASE + energyFactor * tempoFactor * 0.028 + beatPulse * 0.045,
+        ROTATE_SPEED_BASE,
+        ROTATE_SPEED_MAX
+    );
+    smoothRotateSpeed = lerp(smoothRotateSpeed, targetRotateSpeed, beatPulse > 0.5 ? 0.72 : 0.18);
+}
+
+function updateVisualEffects() {
+    if (rotateMode && playing) {
+        panelRotation += smoothRotateSpeed;
+    } else if (rotateMode) {
+        panelRotation += ROTATE_SPEED_BASE * 0.6;
     } else {
-        smoothRedSat = lerp(smoothRedSat, targetRed, 0.24);
-    }
-    if (targetBlue > smoothBlueSat) {
-        smoothBlueSat = lerp(smoothBlueSat, targetBlue, 0.58);
-    } else {
-        smoothBlueSat = lerp(smoothBlueSat, targetBlue, 0.22);
+        panelRotation = lerp(panelRotation, 0, 0.08);
+        smoothRotateSpeed = lerp(smoothRotateSpeed, 0, 0.12);
     }
 
-    let peak = bands.peak;
-    let spike = max(0, peak - max(prevInstantPeak * 0.9, smoothLevel + 0.28));
-    prevInstantPeak = peak;
-
-    let flashTarget = 0;
-    if (peak > 0.78 && spike > 0.14) {
-        flashTarget = constrain(spike * 2.2, 0, 1);
+    if (!solarizeMode || !autoMode) {
+        smoothSolarize = lerp(smoothSolarize, solarizeMode ? 1 : 0, 0.1);
     }
 
-    if (flashTarget > 0 && millis() - lastSolarizeFlash >= SOLARIZE_COOLDOWN_MS) {
-        smoothSolarize = flashTarget;
-        lastSolarizeFlash = millis();
-    } else {
-        smoothSolarize *= 0.4;
+    if (!pulseMode || !autoMode) {
+        smoothPulse = lerp(smoothPulse, pulseMode ? 0.75 : 0, 0.14);
     }
+
+    if (!pixelateMode || !autoMode) {
+        smoothPixelate = lerp(smoothPixelate, pixelateMode ? 0.7 : 0, 0.14);
+    }
+}
+
+function getPanelPulseTransform(w, h) {
+    if (smoothPulse < 0.03) return { x: 0, y: 0, scale: 1, angle: 0 };
+
+    let amp = smoothPulse * (0.35 + smoothPeak * 0.4 + smoothBass * 0.5 + beatPulse * 0.6);
+    let beatHz = 1000 / max(beatInterval, 160);
+    let t = millis() * 0.001 * beatHz * TWO_PI * 1.6;
+    let shake = 1 + beatPulse * 0.45;
+    return {
+        x: (sin(t * 1.7) * 0.65 + sin(t * 3.4) * 0.35) * amp * w * 0.04 * shake,
+        y: (cos(t * 1.9) * 0.65 + cos(t * 3.8) * 0.35) * amp * h * 0.04 * shake,
+        scale: 1 + amp * 0.06 * sin(t * 1.3) * shake + beatPulse * 0.04,
+        angle: amp * 0.02 * sin(t * 2.5) * shake
+    };
 }
 
 function decayAudioLevels() {
-    smoothBass = lerp(smoothBass, 0, 0.12);
-    smoothMid = lerp(smoothMid, 0, 0.12);
-    smoothTreble = lerp(smoothTreble, 0, 0.12);
     smoothLevel = lerp(smoothLevel, 0, 0.12);
     smoothPeak = lerp(smoothPeak, 0, 0.12);
-    smoothRedSat = lerp(smoothRedSat, 0, 0.12);
+    smoothTreble = lerp(smoothTreble, 0, 0.12);
     smoothBlueSat = lerp(smoothBlueSat, 0, 0.12);
-    smoothSolarize = 0;
-    prevInstantPeak = 0;
-    prevBass = 0;
+    smoothBass = lerp(smoothBass, 0, 0.12);
+    beatPulse = lerp(beatPulse, 0, 0.18);
+    smoothRotateSpeed = lerp(smoothRotateSpeed, 0, 0.12);
+    smoothPixelate = lerp(smoothPixelate, 0, 0.12);
+    prevLevel = 0;
     prevTreble = 0;
+    prevBass = 0;
 }
 
 function toggleAutoMode() {
     autoMode = !autoMode;
-    if (autoMode) connectVideoAudioAnalysis();
+    if (autoMode) {
+        connectVideoAudioAnalysis();
+        autoStateIndex = 0;
+        autoGrayscale = false;
+        smoothAutoGrayscale = 0;
+        panelsSwapped = false;
+        solarizeMode = false;
+        rotateMode = false;
+        pulseMode = false;
+        pixelateMode = false;
+        panelRotation = 0;
+        smoothSolarize = 0;
+        smoothPulse = 0;
+        smoothPixelate = 0;
+        smoothRotateSpeed = 0;
+        beatPulse = 0;
+        lastBeatMs = 0;
+    } else {
+        manualBlueSat = 0;
+        smoothManualBlue = 0;
+        grayscaleMode = false;
+        panelsSwapped = false;
+        solarizeMode = false;
+        rotateMode = false;
+        pulseMode = false;
+        pixelateMode = false;
+        panelRotation = 0;
+        smoothSolarize = 0;
+        smoothPulse = 0;
+        smoothPixelate = 0;
+        smoothRotateSpeed = 0;
+        beatPulse = 0;
+        lastBeatMs = 0;
+        targetVideoZoom = 1;
+    }
+}
+
+function togglePulseMode() {
+    pulseMode = !pulseMode;
+}
+
+function toggleSolarizeMode() {
+    solarizeMode = !solarizeMode;
+}
+
+function toggleRotateMode() {
+    rotateMode = !rotateMode;
+}
+
+function togglePanelSwap() {
+    panelsSwapped = !panelsSwapped;
 }
 
 function getPanelVideoRect(panelW, panelH, seamSide) {
@@ -345,13 +540,30 @@ function getPanelVideoRect(panelW, panelH, seamSide) {
 function drawVideoPanels() {
     let left = videoLayout.left;
     let right = videoLayout.right;
-    drawVideoPanel(left.x, left.y, left.w, left.h, false);
-    drawVideoPanel(right.x, right.y, right.w, right.h, true);
+    drawVideoPanel(left.x, left.y, left.w, left.h, panelsSwapped, -1);
+    drawVideoPanel(right.x, right.y, right.w, right.h, !panelsSwapped, 1);
 }
 
-function drawVideoPanel(x, y, w, h, flipX) {
+function drawVideoPanel(x, y, w, h, flipX, rotateDir) {
     push();
     translate(x, y);
+
+    let pulse = getPanelPulseTransform(w, h);
+    if (smoothPulse > 0.03) {
+        translate(w / 2 + pulse.x, h / 2 + pulse.y);
+        rotate(pulse.angle * rotateDir);
+        scale(pulse.scale);
+        translate(-w / 2, -h / 2);
+    }
+
+    if (abs(panelRotation) > 0.001) {
+        translate(w / 2, h / 2);
+        rotate(panelRotation * rotateDir);
+        let rotScale = 1 / max(abs(cos(panelRotation)), abs(sin(panelRotation)), 0.65);
+        scale(min(rotScale, 1.6));
+        translate(-w / 2, -h / 2);
+    }
+
     if (flipX) {
         translate(w, 0);
         scale(-1, 1);
@@ -371,44 +583,43 @@ function drawVideoPanel(x, y, w, h, flipX) {
 }
 
 function drawVideoContent(vx, vy, vw, vh, panelW, panelH) {
-    image(video, vx, vy, vw, vh);
+    if (smoothPixelate > 0.03) {
+        drawPixelatedVideo(vx, vy, vw, vh, panelW, panelH, smoothPixelate);
+    } else {
+        image(video, vx, vy, vw, vh);
+    }
 
-    if (autoMode && playing) {
-        applyRedBlueSaturation(vx, vy, vw, vh, panelW, panelH);
-        applyWhiteSolarizeFlash(vx, vy, vw, vh, panelW, panelH);
+    if (grayscaleMode) {
+        applyGrayscale(vx, vy, vw, vh, panelW, panelH);
+    }
+
+    if (smoothManualBlue > 0.03) {
+        applyBlueSaturation(vx, vy, vw, vh, panelW, panelH, smoothManualBlue);
+    }
+
+    if (smoothSolarize > 0.03) {
+        applyRgbSplit(vx, vy, vw, vh, panelW, panelH, smoothSolarize);
     }
 }
 
-function applyWhiteSolarizeFlash(vx, vy, vw, vh, panelW, panelH) {
-    if (smoothSolarize < 0.18) return;
-
-    let amp = smoothSolarize;
+function applyGrayscale(vx, vy, vw, vh, panelW, panelH) {
     let ctx = drawingContext;
-    let contrast = 2.6 + amp * 1.1;
-    let bright = 1.14 + amp * 0.18;
 
     push();
     ctx.save();
     ctx.beginPath();
     ctx.rect(0, 0, panelW, panelH);
     ctx.clip();
-
-    ctx.filter = `grayscale(1) contrast(${contrast}) brightness(${bright})`;
-    tint(255, 255, 255, amp * 220);
+    ctx.filter = 'grayscale(1) contrast(1.05)';
+    tint(255, 255, 255, 255);
     image(video, vx, vy, vw, vh);
-
-    blendMode(SCREEN);
-    ctx.filter = `grayscale(1) invert(1) contrast(${contrast * 0.8}) brightness(${bright})`;
-    tint(255, 255, 255, amp * 180);
-    image(video, vx, vy, vw, vh);
-
     ctx.filter = 'none';
     ctx.restore();
     pop();
 }
 
-function applyRedBlueSaturation(vx, vy, vw, vh, panelW, panelH) {
-    if (smoothRedSat < 0.03 && smoothBlueSat < 0.03) return;
+function applyBlueSaturation(vx, vy, vw, vh, panelW, panelH, amount) {
+    if (amount < 0.03) return;
 
     let ctx = drawingContext;
 
@@ -418,29 +629,74 @@ function applyRedBlueSaturation(vx, vy, vw, vh, panelW, panelH) {
     ctx.rect(0, 0, panelW, panelH);
     ctx.clip();
 
-    if (smoothRedSat > 0.03) {
-        blendMode(SOFT_LIGHT);
-        tint(255, 28, 28, smoothRedSat * 200);
+    blendMode(SOFT_LIGHT);
+    tint(28, 48, 255, amount * 220);
+    image(video, vx, vy, vw, vh);
+    if (amount > 0.45) {
+        blendMode(SCREEN);
+        tint(18, 36, 255, (amount - 0.45) * 280);
         image(video, vx, vy, vw, vh);
-        if (smoothRedSat > 0.45) {
-            blendMode(SCREEN);
-            tint(255, 18, 18, (smoothRedSat - 0.45) * 260);
-            image(video, vx, vy, vw, vh);
-        }
-    }
-
-    if (smoothBlueSat > 0.03) {
-        blendMode(SOFT_LIGHT);
-        tint(28, 48, 255, smoothBlueSat * 200);
-        image(video, vx, vy, vw, vh);
-        if (smoothBlueSat > 0.45) {
-            blendMode(SCREEN);
-            tint(18, 36, 255, (smoothBlueSat - 0.45) * 260);
-            image(video, vx, vy, vw, vh);
-        }
     }
 
     ctx.restore();
+    pop();
+}
+
+function applyRgbSplit(vx, vy, vw, vh, panelW, panelH, amount) {
+    if (amount < 0.03) return;
+
+    let amp = amount;
+    let split = 10 + amp * 22 + beatPulse * 14;
+    let ctx = drawingContext;
+
+    push();
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(0, 0, panelW, panelH);
+    ctx.clip();
+
+    blendMode(ADD);
+    noStroke();
+
+    tint(255, 24, 24, amp * 240);
+    image(video, vx - split, vy, vw, vh);
+
+    tint(24, 255, 48, amp * 240);
+    image(video, vx, vy, vw, vh);
+
+    tint(32, 64, 255, amp * 240);
+    image(video, vx + split, vy, vw, vh);
+
+    noTint();
+    blendMode(BLEND);
+    ctx.restore();
+    pop();
+}
+
+function drawPixelatedVideo(vx, vy, vw, vh, panelW, panelH, amount) {
+    let blockSize = floor(map(amount + beatPulse * 0.55, 0, 1.5, 52, 8));
+    blockSize = max(6, blockSize);
+    let bufW = max(1, floor(vw / blockSize));
+    let bufH = max(1, floor(vh / blockSize));
+
+    if (!pixelBuffer) {
+        pixelBuffer = createGraphics(bufW, bufH);
+    } else if (pixelBuffer.width !== bufW || pixelBuffer.height !== bufH) {
+        pixelBuffer.resizeCanvas(bufW, bufH);
+    }
+
+    pixelBuffer.noSmooth();
+    pixelBuffer.image(video, 0, 0, bufW, bufH);
+
+    push();
+    drawingContext.save();
+    drawingContext.beginPath();
+    drawingContext.rect(0, 0, panelW, panelH);
+    drawingContext.clip();
+    noSmooth();
+    image(pixelBuffer, vx, vy, vw, vh);
+    smooth();
+    drawingContext.restore();
     pop();
 }
 
@@ -556,6 +812,13 @@ function drawInstructions() {
         'l  loop',
         'z  zoom in',
         'f  zoom out',
+        'b  blue +',
+        'v  blue -',
+        'g  black & white',
+        'c  swap sides',
+        's  solarize',
+        't  rotate',
+        'p  pulse',
         'r  record',
         'd  download',
         'h  hide'
@@ -580,14 +843,36 @@ function drawConvertingIndicator() {
     pop();
 }
 
-function drawAutoIndicator() {
+function drawEffectIndicator() {
+    let parts = [];
+    if (grayscaleMode) parts.push('bw');
+    if (panelsSwapped) parts.push('swap');
+    if (smoothSolarize > 0.03) parts.push('solarize');
+    if (rotateMode) parts.push('rotate');
+    if (smoothPulse > 0.03) parts.push('pulse');
+    if (manualBlueSat > 0.03) parts.push('blue');
+    if (targetVideoZoom > 1.01) parts.push('zoom');
+    if (!parts.length) return;
+
     push();
     textAlign(RIGHT, TOP);
     textSize(9);
     textFont('Courier');
     fill(255, 255, 255, 120);
     noStroke();
-    text('auto', width - 12, 12);
+    text(parts.join(' + '), width - 12, 12);
+    pop();
+}
+
+function drawAutoIndicator() {
+    let state = AUTO_STATES[autoStateIndex];
+    push();
+    textAlign(RIGHT, TOP);
+    textSize(9);
+    textFont('Courier');
+    fill(255, 255, 255, 120);
+    noStroke();
+    text('auto: ' + state.name, width - 12, 12);
     pop();
 }
 
@@ -620,8 +905,24 @@ function keyPressed() {
         toggleLoop();
     } else if (key.toLowerCase() === 'z') {
         zoomVideoIn();
+        return false;
     } else if (key.toLowerCase() === 'f') {
         zoomVideoOut();
+        return false;
+    } else if (key.toLowerCase() === 'b') {
+        manualBlueSat = min(1, manualBlueSat + MANUAL_BLUE_STEP);
+    } else if (key.toLowerCase() === 'v') {
+        manualBlueSat = max(0, manualBlueSat - MANUAL_BLUE_STEP);
+    } else if (key.toLowerCase() === 'g') {
+        grayscaleMode = !grayscaleMode;
+    } else if (key.toLowerCase() === 'c') {
+        if (!autoMode) togglePanelSwap();
+    } else if (key.toLowerCase() === 's') {
+        if (!autoMode) toggleSolarizeMode();
+    } else if (key.toLowerCase() === 't') {
+        if (!autoMode) toggleRotateMode();
+    } else if (key.toLowerCase() === 'p') {
+        if (!autoMode) togglePulseMode();
     } else if (key.toLowerCase() === 'r') {
         toggleRecording();
     } else if (key.toLowerCase() === 'd') {
